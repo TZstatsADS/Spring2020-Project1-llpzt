@@ -1,0 +1,340 @@
+---
+title: "HOW TO RECOGNIZE THE GENRE?"
+output:
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r include=FALSE}
+
+
+packages.used=c("rvest", "tibble", 
+                "sentimentr", "gplots", "dplyr",
+                "tm", "syuzhet", "factoextra", 
+                "beeswarm", "scales", "RColorBrewer",
+                "RANN", "topicmodels", "stringr",
+                "ggplot2","tokenizers","wordcloud",
+                "textdata","tidytext")
+
+
+# check packages that need to be installed.
+packages.needed=setdiff(packages.used, 
+                        intersect(installed.packages()[,1], 
+                                  packages.used))
+# install additional packages
+if(length(packages.needed)>0){
+  install.packages(packages.needed, dependencies = TRUE)
+}
+# load packages
+library("rvest")
+library("tibble")
+library("syuzhet")
+library("sentimentr")
+library("gplots")
+library("dplyr")
+library("tm")
+library("syuzhet")
+library("factoextra")
+library("beeswarm")
+library("scales")
+library("RColorBrewer")
+library("RANN")
+library("tm")
+library("topicmodels")
+library("stringr")
+library("tokenizers")
+library("ggplot2")
+library("wordcloud")
+library("textdata")
+library("tidytext")
+
+
+```
+
+![ ](../figs/title.jpg)
+
+## Introduction
+
+Suppose I know **LITTLE** English and **SELDOM** listen to songs. Is it possible for me to recognize the genre of a song? Is it possible for me to pretend like a pro musician? Under such assumption, I can utilize neither the understanding of lyrics nor any experience to songs, so it will be a hard task. This project will explore some methods to help me with it. Let's repeat the rule of the game:  
+1. Your English is not good. You just know few words. You cannot even understand a whole sentence.  
+2. Your have few experience to songs. You know nothing about genre and nothing about artists.  
+3. Listen to a song randomly picked from the data and recognize the genre of it.
+
+
+```{r include=FALSE}
+# import data
+load('../output/processed_lyrics.RData')
+data <- dt_lyrics
+
+# filter out two genres
+data <- data.frame(data) %>%
+  filter(!(genre=="Other")) %>%
+  filter(!(genre=="Not Available"))%>%
+  group_by(genre)
+
+```
+
+Let's first filter out songs with no genre in the data, Other and Not Available. Then there are 10 genres in our data: Folks, Indie, Hip-Hop, Jazz, Electronics, Rock, Metal, Country, R&B, Pop. Let's try to recognize them one by one.
+
+## Folks & Indie
+
+Because the song is randomly picked from the data, We first see the percentage of each genre. 
+
+```{r}
+genre_percent <- data%>%
+  summarize(count = n())%>%
+  mutate(percent = count/sum(count))%>%
+  arrange(percent)
+
+slices <- c(genre_percent$count)
+lbls <- c(genre_percent$genre)
+pct <- round(slices/sum(slices)*100)
+lbls <- paste(lbls, pct)
+lbls <- paste(lbls,"%",sep="")
+pie(slices,labels = lbls, col=rainbow(length(lbls)),
+   radius = 1.05,cex=0.7)
+
+```
+
+We can see that more than one half of all the songs is rock. So if I cannot find any features after listening to a song, even before I listen to it, I can say it is rock. 0.5 probability is considerable when the sample space is 10. But let's see if there is a better way to recognize rocks later. Now we can focus on the genres with least percent--folks and Indie. Only about 1% of all the songs are folks and Indie. Even if we don't account rocks, they are only 2% of the rest. 1% in such a game, they are first out. I won't say the song is folks or Indie. 
+
+## Hip-Hop
+
+The tempo of a song is easy to tell without any knowledge of English or songs. It is either fast or slow. We can assume that the average length of different genres of songs are approximately the same, then we can measure the tempo of a song by the total number of words in it. The more words in it, the faster the tempo is. The figure below shows the distribuion of words in a song of different genres.
+
+```{r }
+data_by_genre <- data %>%
+  mutate(n_of_words = count_words(lyrics)) %>%
+  filter(n_of_words<=650)%>%
+  group_by(genre) 
+ggplot(data_by_genre, aes(x=genre,y=n_of_words,fill=genre))+
+  geom_boxplot(alpha=0.3)+
+  theme_bw()+
+  labs(title="Average Number of Words in Different Genres")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  labs(y = "Number of Words")+
+  labs(x = "Genre")+
+  theme(legend.position="none")+
+  theme(axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),  
+        axis.title.x = element_text(size = 16),
+        axis.title.y = element_text(size = 16))+
+  theme(plot.title = element_text(size=22))
+
+
+```
+
+We can see that the words in Hip-Hop are much more than other genres. Then let's calculate the percentage of Hip-Hop at a fast tempo. We can use the mean number of words in Hip-Hop as a lower limit.
+
+```{r}
+# Calculate the percentage of Hip-Hop at a fast tempo
+data_hip <- data%>%
+  filter(genre=="Hip-Hop")%>%
+  mutate(words = count_words(lyrics))
+x <- mean(data_hip$words)
+
+data_by_genre2 <- data_by_genre%>%
+  filter(count_words(lyrics)>x)%>%
+  summarise(count=n())%>%
+  mutate(per=count/sum(count))
+
+slices <- c(sum(data_by_genre2[data_by_genre2$genre!="Hip-Hop",]$count),
+            data_by_genre2[data_by_genre2$genre=="Hip-Hop",]$count)
+lbls <- c("Others","Hip-Hop")
+pct <- round(slices/sum(slices)*100)
+lbls <- paste(lbls, pct)
+lbls <- paste(lbls,"%",sep="")
+pie(slices,labels = lbls, col=rainbow(length(lbls)),
+   main="Songs with Massive Words")
+
+```
+
+
+For all the songs with number of words equal to or more than the average words of Hip-Hop, we have a 66% of chance that the song is a Hip-Hop. The probability will continue increasing when there are more words than the average number of words in Hip-Hop. Therefore, if the tempo of a song is fast and I hear a lot of words in it, I will say that it's a Hip-Hop.
+
+## Metal & Rocks
+
+Let's review the boxplots. We can see that metal and rocks have a lot of outliers at the top. So it is reasonable to assume that they have more songs with small amount of words than other genres, though their boxplots are approximately on a same level.Let's choose 180 as the upper limit for this analysis and see the percentage of different genres because the average of all genres except Hip-Hop is approximately 180. Actually the result won't be quite different if you choose other values close to or less than 180.
+
+```{r}
+
+small <- data%>%
+  filter(count_words(lyrics)<180)%>%
+  group_by(genre)%>%
+  summarize(count = n())
+small_rock <- small$count[small$genre=="Rock"]
+small_metal <- small$count[small$genre=="Metal"]
+small_others <- sum(small$count)-small_rock-small_metal
+slices <- c(small_rock,small_metal,small_others)
+lbls <- c("Rock","Metal","Others")
+pct <- round(slices/sum(slices)*100)
+lbls <- paste(lbls, pct)
+lbls <- paste(lbls,"%",sep="")
+pie(slices,labels = lbls, col=rainbow(length(lbls)),
+   main="Songs with Few Words")
+
+```
+
+Since metal is a sub genre of rock and very hard to distinguish, we can just put them together. Even those who have heard a lot of songs can make a mistake judging whether one song is metal or rock when they hear it for the first time, so I, who don't know English and rarely listened to a song, am not required for that. A song have 70% of chance to be rock or metal when there are only a small amount of words in it. Therefore, if the tempo of a song is slow and I hear few words in it, I will say that it's a rock or metal.
+
+Before next step, we can filter out songs of fast tempo, slow tempo, folks and Indie as we have a high chance to recognize them. After filtering, let's memorize the high-frequency words for each of the remaining genre. It is a hard step to choose the words. You need to add and delete stop words and test them over and over again. Firstly, the words must be common words because I know little English. I must catch them when listening to the song. Secondly, the words must be representative and different among the genres or it is meaningless to memorize these words. 
+
+
+My strategy is to focus on these high-frequency words but ignore all the other words during the song. Once I catch a word on the list, I will recognize the song as the genre of the corresponding word. It is always annoying to memorize words, so I create small wordclouds to make the amount of words visually small.
+
+```{r}
+
+data_memo <- dt_lyrics%>%
+  filter(count_words(lyrics)<560)%>%
+  filter(count_words(lyrics)>180)%>%
+  unnest_tokens(word, lyrics)
+
+
+```
+
+```{r}
+data("stop_words")
+
+
+data_memo1 <- data_memo%>%
+  filter(!word %in% c(stop_words$word,"love","baby",
+                      "yeah","gonna","time",
+                      "feel","heart","night",
+                      "girl","life","wanna",
+                      "day","hey","world","home",
+                      "la","eyes","mind","gotta",
+                      "ooh","hold"))
+
+
+
+
+
+```
+
+**Words to Memorize for Pop: **
+```{r}
+
+word_pop <- data_memo1%>%
+  filter(genre=="Pop")%>%
+  count(word,sort=TRUE)
+wordcloud(word_pop$word,word_pop$n, 
+          scale=c(2,0.5),
+          max.words=30,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"Blues"),
+          )
+```
+
+**Words to Memorize for Country:**
+```{r}
+
+word_country <- data_memo1%>%
+  filter(genre=="Country")%>%
+  count(word,sort=TRUE)
+
+
+
+wordcloud(word_country$word,word_country$n,
+          scale=c(2,0.5),
+          max.words=30,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"Purples"),
+          )
+
+```
+
+**Words to Memorize for R&B:**
+```{r}
+
+word_rb <- data_memo1%>%
+  filter(genre=="R&B")%>%
+  count(word,sort=TRUE)
+wordcloud(word_rb$word,word_rb$n, 
+          scale=c(2,0.5),
+          max.words=30,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"Oranges"),
+          )
+```
+
+**Words to Memorize for Electronic:**
+
+```{r}
+
+word_el <- data_memo1%>%
+  filter(genre=="Electronic")%>%
+  count(word,sort=TRUE)
+wordcloud(word_el$word,word_el$n, 
+          scale=c(2,0.5),
+          max.words=30,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"Greens"),
+          )
+```
+
+**Words to Memorize for Jazz:**
+```{r}
+
+word_jazz <- data_memo1%>%
+  filter(genre=="Jazz")%>%
+  count(word,sort=TRUE)
+wordcloud(word_jazz$word,word_jazz$n, 
+          scale=c(2,0.5),
+          max.words=30,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"Reds"),
+          )  
+
+
+
+```
+
+
+I don't implement sentiment analysis because it is too hard for me to feel the emotion in a song if I cannot understand the lyrics at all. Even for the simplest classification, namely positive and negative, I need to undersatnd at least a pattern of the lyrics to confirm the emotion. Otherwise I can have an opposite result. If I only listen to the rhythm and several words, I can mistake anger for ecstasy, or mistake arrogance for trust, as they may have silimar rhythm. Then the sentiment is totally wrong.
+
+I also don't use the artist data because you can hardly tell the artist if you rarely listen to songs. Then the information about artists is not useful.
+
+```{r include=FALSE}
+
+artist_data <- read.csv('../data/artists.csv') 
+data_with_artist <- dt_lyrics %>%
+  left_join(artist_data, by = c("artist" = "Artist"))
+glimpse(data_with_artist)
+glimpse(artist_data)
+
+```
+
+
+## Conclusion
+According to this project, I and those who know little English and seldom listen to songs can try to win this game in the following steps:  
+1. Before listening the the song, memorize about 30 words for each of these genres: R&B, Jazz, Country, Electronic, and PoP. The list of words are in the wordclouds above.  
+2. Meanwhile, get familiar with tempo: how fast is fast tempo, how slow is slow tempo. Listen to some examples to get a sense of it.  
+3. When the song begins, try to recognize the tempo as soon as possible. If it is fast and with massive lyrics, then it is Hip-Hop. If it is slow and with few words, then it is metal or rocks.  
+4. If you cannot recognize the tempo easily, then the chance of the 5 genres in step 1 increases. Ignoring all the other words, try to catch the words you memorized just now. If you catched one, then the song is of the genre of the corresponding word.  
+5. If you still don't catch any words when the song ends, then recognize it as rocks. You still have more than 50% chance to win.
+
+**If the data includes the audio, the strategy and the method can be much improved as we can learn the rhythm, melody, harmony, beat, and many other important elements of a song. I believe we can reach a much higher accuracy at that time.**
